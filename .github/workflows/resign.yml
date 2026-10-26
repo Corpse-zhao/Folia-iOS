@@ -24,25 +24,40 @@ jobs:
           brew install ldid
           rm -rf work && mkdir work && cd work
           unzip -q ../input.ipa
+
+          # 清理过期签名材料
           find . -name embedded.mobileprovision -delete
           find . -name "_CodeSignature" -type d -exec rm -rf {} + || true
-          set -x
+
+          # 移除损坏的 koffi 原生模块：原包已被截断
+          # __TEXT 声明 704512 但文件仅 566972 字节，__DATA_CONST fileoff=704512 已越界
+          # ldid 解析时 mach_header.GetSize() 断言失败
+          rm -f "Payload/App.app/public/nodejs-project/node_modules/@koromix/koffi-darwin-arm64/darwin_arm64/koffi.node"
+
+          # 逐个重签 Mach-O
           ldid -S Payload/App.app/App
           ldid -S Payload/App.app/Frameworks/Capacitor.framework/Capacitor
           ldid -S Payload/App.app/Frameworks/NodeMobile.framework/NodeMobile
           ldid -S Payload/App.app/Frameworks/Cordova.framework/Cordova
-          set +x
+
+          # 递归签名整个 app bundle（TrollStore 的 ldid -s 走的就是这条路径）
+          ldid -s Payload/App.app
+
           zip -qry ../folia-resigned.ipa Payload
           ls -la ../folia-resigned.ipa
 
       - name: Verify
         run: |
-          cd work && codesign -dv Payload/App.app/App 2>&1 | head -12 || true
+          cd work
+          echo "== App =="
+          codesign -dv Payload/App.app/App 2>&1 | head -10 || true
+          echo "== koffi.node =="
+          find . -name "koffi.node" || echo "removed"
 
       - name: Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VER="resigned-$(date +%Y%m%d%H%M)"
-          gh release create "$VER" folia-resigned.ipa --title "Folia resigned (ldid adhoc)" --notes "provision removed, 4 binaries adhoc-resigned" || \
+          VER="resigned2-$(date +%Y%m%d%H%M)"
+          gh release create "$VER" folia-resigned.ipa --title "Folia resigned v2 (koffi removed)" --notes "koffi.node removed (corrupt in source), ldid -s full resign" || \
             gh release upload "$VER" folia-resigned.ipa --clobber
