@@ -34,9 +34,23 @@ jobs:
           # ldid 解析时 mach_header.GetSize() 断言失败
           rm -f "Payload/App.app/public/nodejs-project/node_modules/@koromix/koffi-darwin-arm64/darwin_arm64/koffi.node"
 
-          # 递归签名整个 app bundle（TrollStore 走的就是 ldid -s）
-          # ldid 2.1.5 起 `ldid -S` 单独使用会触发 flag_S 断言，必须先给 -s 或显式 -S<file>
-          ldid -s Payload/App.app
+          # procursus ldid 2.1.5: `-S` 需要带 entitlements 文件参数，裸 `-S`/`-s` 会触发 flag_S 断言
+          ldid -v || true
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0"><dict/></plist>' > /tmp/ent.plist
+          plutil -lint /tmp/ent.plist
+
+          for bin in \
+            "Payload/App.app/App" \
+            "Payload/App.app/Frameworks/Capacitor.framework/Capacitor" \
+            "Payload/App.app/Frameworks/NodeMobile.framework/NodeMobile" \
+            "Payload/App.app/Frameworks/Cordova.framework/Cordova"
+          do
+            echo "signing $bin"
+            ldid -S/tmp/ent.plist "$bin"
+          done
 
           zip -qry ../folia-resigned.ipa Payload
           ls -la ../folia-resigned.ipa
