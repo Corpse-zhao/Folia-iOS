@@ -34,13 +34,8 @@ jobs:
           # ldid 解析时 mach_header.GetSize() 断言失败
           rm -f "Payload/App.app/public/nodejs-project/node_modules/@koromix/koffi-darwin-arm64/darwin_arm64/koffi.node"
 
-          # 逐个重签 Mach-O
-          ldid -S Payload/App.app/App
-          ldid -S Payload/App.app/Frameworks/Capacitor.framework/Capacitor
-          ldid -S Payload/App.app/Frameworks/NodeMobile.framework/NodeMobile
-          ldid -S Payload/App.app/Frameworks/Cordova.framework/Cordova
-
-          # 递归签名整个 app bundle（TrollStore 的 ldid -s 走的就是这条路径）
+          # 递归签名整个 app bundle（TrollStore 走的就是 ldid -s）
+          # ldid 2.1.5 起 `ldid -S` 单独使用会触发 flag_S 断言，必须先给 -s 或显式 -S<file>
           ldid -s Payload/App.app
 
           zip -qry ../folia-resigned.ipa Payload
