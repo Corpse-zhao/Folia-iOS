@@ -1,0 +1,48 @@
+name: Resign Folia ipa (ldid adhoc)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  resign:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download raw input ipa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download resign-input -p input.ipa -O input.ipa
+
+      - name: Resign
+        run: |
+          set -e
+          brew install ldid
+          rm -rf work && mkdir work && cd work
+          unzip -q ../input.ipa
+          find . -name embedded.mobileprovision -delete
+          find . -name "_CodeSignature" -type d -exec rm -rf {} + || true
+          set -x
+          ldid -S Payload/App.app/App
+          ldid -S Payload/App.app/Frameworks/Capacitor.framework/Capacitor
+          ldid -S Payload/App.app/Frameworks/NodeMobile.framework/NodeMobile
+          ldid -S Payload/App.app/Frameworks/Cordova.framework/Cordova
+          set +x
+          zip -qry ../folia-resigned.ipa Payload
+          ls -la ../folia-resigned.ipa
+
+      - name: Verify
+        run: |
+          cd work && codesign -dv Payload/App.app/App 2>&1 | head -12 || true
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="resigned-$(date +%Y%m%d%H%M)"
+          gh release create "$VER" folia-resigned.ipa --title "Folia resigned (ldid adhoc)" --notes "provision removed, 4 binaries adhoc-resigned" || \
+            gh release upload "$VER" folia-resigned.ipa --clobber
