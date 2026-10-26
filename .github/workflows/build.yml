@@ -1,0 +1,98 @@
+name: Build Folia iOS (ipa + roothide deb)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build Folia web (dist)
+        run: |
+          git clone --depth 1 https://github.com/chthollyphile/folia-major.git folia
+          cd folia
+          npm ci || npm install
+          npm run build
+          test -d dist || { echo "dist not found"; ls; exit 1; }
+          du -sh dist
+
+      - name: Create Capacitor iOS shell
+        run: |
+          mkdir shell && cd shell
+          npm init -y >/dev/null
+          npm i @capacitor/core@latest @capacitor/cli@latest @capacitor/ios@latest
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.corpsezhao.folia",
+            "appName": "Folia",
+            "webDir": "www",
+            "ios": { "contentInset": "never" }
+          }
+          EOF
+          mkdir -p www
+          cp -R ../folia/dist/* www/
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Patch Info.plist (HTTP + background audio)
+        run: |
+          P=shell/ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$P" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$P" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$P" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$P" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Folia" "$P" 2>/dev/null || true
+
+      - name: Archive (unsigned)
+        run: |
+          cd shell/ios/App
+          xcodebuild -workspace App.xcworkspace -scheme App \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath ../../../build/App.xcarchive archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | grep -Ev '^\s*$' | tail -40
+          test -d ../../../build/App.xcarchive/Products/Applications/App.app
+
+      - name: Assemble ipa + adhoc sign
+        run: |
+          brew install ldid
+          rm -rf Payload && mkdir Payload
+          cp -R build/App.xcarchive/Products/Applications/App.app Payload/Folia.app
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Folia" Payload/Folia.app/Info.plist
+          ldid -S Payload/Folia.app/App
+          zip -qry folia-ios-unsigned.ipa Payload
+          ls -la folia-ios-unsigned.ipa
+
+      - name: Build roothide deb
+        run: python3 scripts/make_deb.py Payload/Folia.app folia-ios.deb
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: folia-ios
+          path: |
+            folia-ios-unsigned.ipa
+            folia-ios.deb
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER=1.0.$(date +%m%d%H%M)
+          gh release create "$VER" folia-ios-unsigned.ipa folia-ios.deb \
+            --title "Folia iOS $VER" \
+            --notes "Folia Web 版 iOS 壳（Capacitor）。
+          - **Sileo 安装（推荐）**：下载 folia-ios.deb，Filza 打开安装
+          - 或下载 ipa 自行签名侧载
+          未签 ipa：需用 roothide 签名工具签后安装
+          Web 前端构建自 chthollyphile/folia-major main 分支" \
+            || echo "release create failed (may already exist)"
