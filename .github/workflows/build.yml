@@ -55,11 +55,14 @@ jobs:
       - name: Archive (unsigned)
         run: |
           cd shell/ios/App
-          xcodebuild -workspace App.xcworkspace -scheme App \
-            -configuration Release -destination 'generic/platform=iOS' \
-            -archivePath ../../../build/App.xcarchive archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            2>&1 | grep -Ev '^\s*$' | tail -40
+          ls -la
+          ARGS="-configuration Release -destination generic/platform=iOS -archivePath ../../../build/App.xcarchive archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="
+          if [ -d App.xcworkspace ]; then
+            xcodebuild -workspace App.xcworkspace -scheme App $ARGS 2>&1 | tail -40
+          else
+            xcodebuild -project App.xcodeproj -scheme App -resolvePackageDependencies || true
+            xcodebuild -project App.xcodeproj -scheme App $ARGS 2>&1 | tail -40
+          fi
           test -d ../../../build/App.xcarchive/Products/Applications/App.app
 
       - name: Assemble ipa + adhoc sign
